@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: inspector sidebar on the left, full-height 3D viewport on the right, status bar under the viewport. */
+:root {
+  --bg: #eef1f4;
+  --panel: #ffffff;
+  --ink: #1b232c;
+  --muted: #5e6a77;
+  --line: #d6dce3;
+  --accent: #e0601f;
+  --accent-ink: #ffffff;
+  --viewport: #dfe5eb;
+  --chip: #f1f4f7;
+  --danger: #c0352b;
+  --font-display: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b;
+    --panel: #1a2027;
+    --ink: #e4e9ee;
+    --muted: #8d99a6;
+    --line: #2c353f;
+    --accent: #f07a3c;
+    --accent-ink: #14100c;
+    --viewport: #1f262e;
+    --chip: #232b34;
+    --danger: #ef6a5f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b;
+  --panel: #1a2027;
+  --ink: #e4e9ee;
+  --muted: #8d99a6;
+  --line: #2c353f;
+  --accent: #f07a3c;
+  --accent-ink: #14100c;
+  --viewport: #1f262e;
+  --chip: #232b34;
+  --danger: #ef6a5f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--font-body);
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Sidebar */
+aside {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.brand h1 { font: 600 15px/1.2 var(--font-display); margin: 0; letter-spacing: 0.01em; white-space: nowrap; }
+.brand .fmt { margin-left: auto; font: 500 10px var(--font-mono); color: var(--muted); white-space: nowrap; }
+.logo { width: 22px; height: 22px; flex: none; }
+.scroll { overflow-y: auto; flex: 1; min-height: 0; }
+section.block { padding: 14px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+section.block h2 {
+  margin: 0; font: 600 11px/1 var(--font-display);
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+}
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--chip);
+  border-radius: 6px; padding: 7px 10px; cursor: pointer;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.05); }
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row > .grow { flex: 1; }
+.filename { font: 500 13px var(--font-mono); word-break: break-all; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0; }
+
+dl.props { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+dl.props dt { color: var(--muted); }
+dl.props dd { margin: 0; text-align: right; font: 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+dl.props dd.big { font-size: 14px; font-weight: 500; }
+.axis-x { color: #d6453d; } .axis-y { color: #3b9a4b; } .axis-z { color: #3a73d9; }
+
+select, input[type="number"] {
+  background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+}
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+label.check input { accent-color: var(--accent); width: 15px; height: 15px; }
+
+/* Structure tree */
+ul.tree, ul.tree ul { list-style: none; margin: 0; padding: 0; }
+ul.tree ul { padding-left: 14px; border-left: 1px dashed var(--line); margin-left: 7px; }
+ul.tree li > .node {
+  display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 4px; cursor: pointer;
+}
+ul.tree li > .node:hover { background: var(--chip); }
+ul.tree li > .node.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.swatch { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.25); flex: none; }
+.node .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .count { font: 11px var(--font-mono); color: var(--muted); }
+
+/* Viewport */
+main { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
+#stage { position: relative; background: var(--viewport); min-height: 0; overflow: hidden; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.toolbar {
+  position: absolute; top: 12px; left: 12px; right: 12px;
+  display: flex; gap: 8px; flex-wrap: wrap; pointer-events: none;
+}
+.toolbar .group {
+  pointer-events: auto; display: flex; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 3px; gap: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.toolbar .group button {
+  border: 0; background: transparent; border-radius: 5px; padding: 5px 9px; cursor: pointer; font-size: 13px;
+}
+.toolbar .group button:hover { background: var(--chip); }
+.toolbar .group button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.toolbar .spacer { flex: 1; }
+
+.measure-card {
+  position: absolute; right: 12px; bottom: 12px; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px;
+  padding: 10px 12px; min-width: 210px; display: none; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+.measure-card.on { display: grid; }
+.measure-card h3 { margin: 0; font: 600 11px var(--font-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.measure-card { width: 290px; max-height: calc(100% - 80px); overflow-y: auto; }
+.seg { display: flex; background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 2px; gap: 2px; }
+.seg button { flex: 1; border: 0; background: transparent; border-radius: 4px; padding: 4px 6px; cursor: pointer; font-size: 12.5px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.m-ent { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.m-tag { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; color: #fff; font: 600 11px var(--font-mono); }
+.m-rel { border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 6px; }
+.m-rel dd.big { font-size: 15px; font-weight: 600; color: var(--accent); }
+#mTip, .m-dim {
+  position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 5px; padding: 3px 7px; font: 500 12px var(--font-mono); white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+#mTip { display: none; z-index: 5; }
+.m-dim { transform: translate(-50%, -50%); border-color: var(--ink); }
+
+#drop {
+  position: absolute; inset: 0; display: none; place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 2px dashed var(--accent); font: 600 18px var(--font-display); color: var(--ink);
+  pointer-events: none;
+}
+#drop.on { display: grid; }
+#busy {
+  position: absolute; inset: 0; display: none; place-items: center; background: color-mix(in srgb, var(--viewport) 70%, transparent);
+}
+#busy.on { display: grid; }
+#busy .box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; display: flex; gap: 12px; align-items: center; }
+.spinner { width: 18px; height: 18px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+footer.status {
+  display: flex; gap: 16px; align-items: center; padding: 6px 12px;
+  border-top: 1px solid var(--line); background: var(--panel);
+  font: 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; flex-wrap: wrap;
+}
+footer.status .err { color: var(--danger); }
+footer.status .right { margin-left: auto; }
+
+@media (max-width: 760px) {
+  body { grid-template-columns: 1fr; grid-template-rows: 55% 45%; }
+  aside { order: 2; border-right: 0; border-top: 1px solid var(--line); }
+  main { order: 1; }
+}
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2 21 7v10l-9 5-9-5V7z" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <path d="M12 12 21 7M12 12 3 7M12 12v10" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+    </svg>
+    <h1>3D Viewer</h1>
+    <span class="fmt">STEP IGES STL 3MF</span>
+  </div>
+  <div class="scroll">
+    <section class="block">
+      <h2>File</h2>
+      <div class="filename" id="fileName">No file</div>
+      <div class="row">
+        <button class="btn primary grow" id="openBtn" type="button">Open file…</button>
+        <button class="btn" id="exampleBtn" type="button">Example</button>
+      </div>
+      <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs,.brep,.brp,.stl,.3mf" hidden>
+      <p class="hint">Or drop a .step, .iges, .brep, .stl or .3mf file on the view. STL is read as mm. Files stay in your browser.</p>
+      <div class="row">
+        <label for="quality" class="grow">Mesh quality</label>
+        <select id="quality">
+          <option value="0.003">Coarse</option>
+          <option value="0.001" selected>Normal</option>
+          <option value="0.0003">Fine</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Size (visible parts, mm)</h2>
+      <dl class="props">
+        <dt class="axis-x">X</dt><dd class="big" id="sx">–</dd>
+        <dt class="axis-y">Y</dt><dd class="big" id="sy">–</dd>
+        <dt class="axis-z">Z</dt><dd class="big" id="sz">–</dd>
+        <dt>Min</dt><dd id="bmin">–</dd>
+        <dt>Max</dt><dd id="bmax">–</dd>
+      </dl>
+    </section>
+
+    <section class="block">
+      <h2>Mass properties</h2>
+      <dl class="props">
+        <dt>Volume</dt><dd id="vol">–</dd>
+        <dt>Surface area</dt><dd id="area">–</dd>
+        <dt>Centroid</dt><dd id="cog">–</dd>
+        <dt>Mass</dt><dd class="big" id="mass">–</dd>
+      </dl>
+      <div class="row">
+        <label for="material" class="grow">Material</label>
+        <select id="material">
+          <option value="2.70">Aluminium 6061 · 2.70</option>
+          <option value="2.81">Aluminium 7075 · 2.81</option>
+          <option value="7.85">Steel · 7.85</option>
+          <option value="8.00">Stainless 304 · 8.00</option>
+          <option value="4.43">Titanium Ti-6Al-4V · 4.43</option>
+          <option value="1.24">PLA · 1.24</option>
+          <option value="1.04">ABS · 1.04</option>
+          <option value="1.01">PA12 (SLS) · 1.01</option>
+          <option value="1.14">PA6 · 1.14</option>
+          <option value="1.41">POM · 1.41</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </div>
+      <div class="row" id="customRow" hidden>
+        <label for="density" class="grow">Density (g/cm³)</label>
+        <input type="number" id="density" min="0.01" step="0.01" value="1.00" style="width:90px">
+      </div>
+      <p class="hint">Computed from the triangle mesh, so values are approximate. Volume is only valid for closed solids.</p>
+    </section>
+
+    <section class="block">
+      <h2>Section</h2>
+      <div class="row">
+        <label class="check grow"><input type="checkbox" id="clipOn"> Cut the model</label>
+        <select id="clipAxis" aria-label="Section axis">
+          <option value="x">X</option>
+          <option value="y">Y</option>
+          <option value="z" selected>Z</option>
+        </select>
+        <button class="btn" id="clipFlip" type="button" title="Flip the cut side">Flip</button>
+      </div>
+      <input type="range" id="clipPos" min="0" max="1000" value="500" aria-label="Section position">
+      <div class="row"><span class="hint grow">Position</span><span class="filename" id="clipVal">–</span></div>
+    </section>
+
+    <section class="block">
+      <h2>Structure</h2>
+      <ul class="tree" id="tree"><li class="hint">Open a file to see its parts.</li></ul>
+    </section>
+  </div>
+</aside>
+
+<main>
+  <div id="stage">
+    <div class="toolbar">
+      <div class="group" role="group" aria-label="Views">
+        <button type="button" data-view="iso" title="Isometric (I)">Iso</button>
+        <button type="button" data-view="front" title="Front, looking along +Y (1)">Front</button>
+        <button type="button" data-view="back" title="Back (2)">Back</button>
+        <button type="button" data-view="left" title="Left (3)">Left</button>
+        <button type="button" data-view="right" title="Right (4)">Right</button>
+        <button type="button" data-view="top" title="Top (5)">Top</button>
+        <button type="button" data-view="bottom" title="Bottom (6)">Bottom</button>
+        <button type="button" id="fitBtn" title="Fit to view (F)">Fit</button>
+      </div>
+      <div class="group" role="group" aria-label="Display">
+        <button type="button" id="edgesBtn" aria-pressed="true" title="Show edges (E)">Edges</button>
+        <button type="button" id="wireBtn" aria-pressed="false" title="Wireframe (W)">Wire</button>
+        <button type="button" id="orthoBtn" aria-pressed="true" title="Orthographic or perspective (O)">Ortho</button>
+      </div>
+      <div class="spacer"></div>
+      <div class="group" role="group" aria-label="Tools">
+        <button type="button" id="measureBtn" aria-pressed="false" title="Measure points, edges and faces (M)">Measure</button>
+      </div>
+    </div>
+    <div class="measure-card" id="measureCard" aria-live="polite">
+      <h3>Measure</h3>
+      <div class="seg" role="group" aria-label="Pick mode">
+        <button type="button" id="mModeFeat" aria-pressed="true">Features</button>
+        <button type="button" id="mModeFree" aria-pressed="false" title="Pick any point on an edge or face (or hold Shift)">Free points</button>
+      </div>
+      <div id="mBody"></div>
+      <button class="btn" id="mClear" type="button">Clear selection</button>
+    </div>
+    <div id="mTip"></div>
+    <div id="drop">Drop the file to open it</div>
+    <div id="busy"><div class="box"><div class="spinner"></div><span id="busyText">Reading file…</span></div></div>
+  </div>
+  <footer class="status">
+    <span id="stTris">0 triangles</span>
+    <span id="stParts">0 parts</span>
+    <span id="stPick">Click a surface to read its coordinates</span>
+    <span class="right" id="stMsg">Left drag: rotate · Right drag: pan · Wheel: zoom</span>
+  </footer>
+</main>
+
+<script src="occt-import-js.js"></script>
+<script type="module">
+import * as THREE from './three.module.min.js';
+import { OrbitControls } from './OrbitControls.js';
+import { STLLoader } from './STLLoader.js';
+import { ThreeMFLoader } from './3MFLoader.js';
+import * as fflate from './fflate.module.js';
+import { createMeasure } from './measure.js';
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage');
+
+// ---------- Renderer, scene, cameras ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+renderer.autoClear = false;
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+THREE.Object3D.DEFAULT_UP.set(0, 0, 1); // CAD convention: Z up
+const persp = new THREE.PerspectiveCamera(35, 1, 0.1, 1e6);
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
+persp.up.set(0, 0, 1); ortho.up.set(0, 0, 1);
+let camera = ortho;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.6));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+scene.add(keyLight, fillLight, keyLight.target, fillLight.target);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.15;
+controls.screenSpacePanning = true;
+
+const model = new THREE.Group();
+scene.add(model);
+
+
+// Corner axis triad, drawn in its own small viewport.
+const triScene = new THREE.Scene();
+const triCam = new THREE.OrthographicCamera(-1.6, 1.6, 1.6, -1.6, -10, 10);
+triCam.up.set(0, 0, 1);
+function axisLabel(text, color) {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = color; g.font = '600 44px IBM Plex Sans, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 32, 34);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
+  s.scale.set(0.55, 0.55, 1); return s;
+}
+[['X', 0xd6453d, '#d6453d', [1, 0, 0]], ['Y', 0x3b9a4b, '#3b9a4b', [0, 1, 0]], ['Z', 0x3a73d9, '#3a73d9', [0, 0, 1]]]
+  .forEach(([t, hex, css, d]) => {
+    const dir = new THREE.Vector3(...d);
+    triScene.add(new THREE.ArrowHelper(dir, new THREE.Vector3(), 1, hex, 0.25, 0.14));
+    const l = axisLabel(t, css); l.position.copy(dir.multiplyScalar(1.35)); triScene.add(l);
+  });
+
+// ---------- State ----------
+const state = {
+  parts: [],        // { name, color, mesh, back, edges, tri, node }
+  lastBuffer: null,
+  lastFormat: null,
+  lastName: null,
+  showEdges: true,
+  wire: false,
+  bbox: new THREE.Box3(),
+  diag: 100,
+  clipPlane: new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
+  clipFlip: false,
+
+};
+
+function themeColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// ---------- Measure tool ----------
+const measure = createMeasure({
+  scene, renderer, stage,
+  getCamera: () => camera,
+  getParts: () => state.parts,
+  isShown: (o) => isShown(o),
+  getClipPlanes: () => ($('clipOn').checked ? [state.clipPlane] : []),
+  isClipped: (p) => $('clipOn').checked && state.clipPlane.distanceToPoint(p) < 0,
+  accent: () => themeColor('--accent') || '#e0601f',
+  card: $('measureCard'), body: $('mBody'), tip: $('mTip'),
+  diag: () => state.diag,
+});
+window.__viewer = { measure, state, getCamera: () => camera, renderer };
+
+// ---------- Sizing and render loop ----------
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  persp.aspect = w / h; persp.updateProjectionMatrix();
+  updateOrthoFrustum();
+}
+function updateOrthoFrustum() {
+  const w = stage.clientWidth || 1, h = stage.clientHeight || 1;
+  const half = (state.diag * 0.6);
+  const aspect = w / h;
+  ortho.left = -half * aspect; ortho.right = half * aspect;
+  ortho.top = half; ortho.bottom = -half;
+  ortho.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+function render() {
+  controls.update();
+  // Lights follow the camera so the model is always lit from the viewer side.
+  const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+  const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+  keyLight.position.copy(controls.target).addScaledVector(dir, 10).addScaledVector(right, -4).addScaledVector(camera.up, 6);
+  keyLight.target.position.copy(controls.target);
+  fillLight.position.copy(controls.target).addScaledVector(dir, 10).addScaledVector(right, 6).addScaledVector(camera.up, -3);
+  fillLight.target.position.copy(controls.target);
+
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setViewport(0, 0, w, h); renderer.setScissorTest(false);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  // Axis triad in the lower-left corner.
+  const s = 96;
+  triCam.position.copy(dir).multiplyScalar(5);
+  triCam.up.copy(camera.up).applyQuaternion(new THREE.Quaternion()); // keep same up
+  triCam.quaternion.copy(camera.quaternion);
+  renderer.clearDepth();
+  renderer.setScissorTest(true);
+  renderer.setScissor(8, 8, s, s); renderer.setViewport(8, 8, s, s);
+  renderer.render(triScene, triCam);
+  renderer.setScissorTest(false);
+  measure.update();
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ---------- Camera views ----------
+const VIEWS = {
+  iso:    new THREE.Vector3(1, -1, 0.8),
+  front:  new THREE.Vector3(0, -1, 0),
+  back:   new THREE.Vector3(0, 1, 0),
+  left:   new THREE.Vector3(-1, 0, 0),
+  right:  new THREE.Vector3(1, 0, 0),
+  top:    new THREE.Vector3(0, -1e-4, 1),
+  bottom: new THREE.Vector3(0, -1e-4, -1),
+};
+let currentView = 'iso';
+function setView(name, keepTarget = false) {
+  currentView = name;
+  const box = state.bbox.isEmpty() ? new THREE.Box3(new THREE.Vector3(-50, -50, -50), new THREE.Vector3(50, 50, 50)) : state.bbox;
+  const center = keepTarget ? controls.target.clone() : box.getCenter(new THREE.Vector3());
+  const radius = box.getSize(new THREE.Vector3()).length() / 2 || 50;
+  const dir = VIEWS[name].clone().normalize();
+  const dist = radius / Math.sin(THREE.MathUtils.degToRad(persp.fov / 2)) * 1.1;
+  for (const cam of [persp, ortho]) {
+    cam.position.copy(center).addScaledVector(dir, dist);
+    cam.lookAt(center);
+  }
+  persp.near = Math.max(dist / 1000, 0.01); persp.far = dist * 100; persp.updateProjectionMatrix();
+  ortho.zoom = 1; ortho.updateProjectionMatrix();
+  controls.target.copy(center);
+  controls.update();
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === name)));
+}
+function fit() { setView(currentView); }
+
+function setCamera(useOrtho) {
+  const prev = camera;
+  camera = useOrtho ? ortho : persp;
+  camera.position.copy(prev.position);
+  camera.quaternion.copy(prev.quaternion);
+  controls.object = camera;
+  controls.update();
+  $('orthoBtn').setAttribute('aria-pressed', String(useOrtho));
+}
+
+// ---------- Loading ----------
+let worker = null;
+function getWorker() {
+  if (worker === null) {
+    try { worker = new Worker('worker.js'); }
+    catch (e) { worker = false; }
+  }
+  return worker;
+}
+let occtMain = null;
+async function parseOnMainThread(format, buffer, params) {
+  if (!occtMain) occtMain = window.occtimportjs({ locateFile: (p) => p });
+  const occt = await occtMain;
+  return occt.ReadFile(format, new Uint8Array(buffer), params);
+}
+function parse(format, buffer, params) {
+  const w = getWorker();
+  if (!w) return parseOnMainThread(format, buffer, params);
+  return new Promise((resolve, reject) => {
+    const onMsg = (ev) => { cleanup(); ev.data.ok ? resolve(ev.data.result) : reject(new Error(ev.data.error)); };
+    const onErr = (ev) => {
+      cleanup(); worker = false;
+      parseOnMainThread(format, buffer, params).then(resolve, reject);
+    };
+    const cleanup = () => { w.removeEventListener('message', onMsg); w.removeEventListener('error', onErr); };
+    w.addEventListener('message', onMsg);
+    w.addEventListener('error', onErr);
+    w.postMessage({ format, buffer: buffer.slice(0), params });
+  });
+}
+
+// STL has no B-rep or units: read it as one mesh in mm.
+function parseStl(name, buffer) {
+  const geo = new STLLoader().parse(buffer);
+  const pos = geo.attributes.position.array;
+  const n = pos.length / 3;
+  const index = new Uint32Array(n);
+  for (let i = 0; i < n; i++) index[i] = i;
+  return {
+    success: n > 0,
+    root: { name, meshes: [0], children: [] },
+    meshes: [{
+      name: name.replace(/\.stl$/i, ''),
+      color: null,
+      attributes: {
+        position: { array: pos },
+        normal: geo.attributes.normal ? { array: geo.attributes.normal.array } : undefined,
+      },
+      index: { array: index },
+    }],
+  };
+}
+
+// 3MF: a zip with one or more meshes and a unit. Bake transforms, scale to mm.
+const MF_UNITS = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
+function parse3mf(name, buffer) {
+  let scale = 1;
+  try {
+    const zip = fflate.unzipSync(new Uint8Array(buffer));
+    const key = Object.keys(zip).find(k => /3D\/.*\.model$/i.test(k));
+    if (key) {
+      const xml = new TextDecoder().decode(zip[key]).slice(0, 4000);
+      const m = xml.match(/<model[^>]*\sunit="([a-z]+)"/i);
+      if (m && MF_UNITS[m[1].toLowerCase()]) scale = MF_UNITS[m[1].toLowerCase()];
+    }
+  } catch (e) { /* keep mm */ }
+  const group = new ThreeMFLoader().parse(buffer);
+  group.updateMatrixWorld(true);
+  const S = new THREE.Matrix4().makeScale(scale, scale, scale);
+  const meshes = [];
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    const g = o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(S, o.matrixWorld));
+    const pos = g.attributes.position.array;
+    let index = g.index ? Uint32Array.from(g.index.array) : null;
+    if (!index) { index = new Uint32Array(pos.length / 3); for (let i = 0; i < index.length; i++) index[i] = i; }
+    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+    const c = mat && mat.color ? mat.color : null;
+    meshes.push({
+      name: o.name || `Object ${meshes.length + 1}`,
+      color: c && !(c.r === 1 && c.g === 1 && c.b === 1) ? [c.r, c.g, c.b] : null,
+      attributes: { position: { array: pos } },
+      index: { array: index },
+    });
+  });
+  return { success: meshes.length > 0, root: { name, meshes: meshes.map((_, i) => i), children: [] }, meshes };
+}
+
+function formatOf(name) {
+  const ext = name.toLowerCase().split('.').pop();
+  if (ext === 'step' || ext === 'stp') return 'step';
+  if (ext === 'iges' || ext === 'igs') return 'iges';
+  if (ext === 'brep' || ext === 'brp') return 'brep';
+  if (ext === 'stl') return 'stl';
+  if (ext === '3mf') return '3mf';
+  return null;
+}
+
+function setBusy(on, text) {
+  $('busy').classList.toggle('on', on);
+  if (text) $('busyText').textContent = text;
+}
+function setMsg(text, isErr = false) {
+  const el = $('stMsg'); el.textContent = text; el.classList.toggle('err', isErr);
+}
+function fmtBytes(n) {
+  return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
+}
+
+async function loadBuffer(name, buffer) {
+  const format = formatOf(name);
+  if (!format) { setMsg(`Cannot open "${name}". Use a .step, .stp, .iges, .igs, .brep, .stl or .3mf file.`, true); return; }
+  state.lastBuffer = buffer; state.lastFormat = format; state.lastName = name;
+  setBusy(true, `Reading ${name} (${fmtBytes(buffer.byteLength)})…`);
+  const t0 = performance.now();
+  try {
+    const params = {
+      linearUnit: 'millimeter',
+      linearDeflectionType: 'bounding_box_ratio',
+      linearDeflection: parseFloat($('quality').value),
+      angularDeflection: 0.5,
+    };
+    const result = format === 'stl' ? parseStl(name, buffer) : format === '3mf' ? parse3mf(name, buffer) : await parse(format, buffer, params);
+    if (!result || !result.success) throw new Error('The file could not be read. It may be damaged or use an unsupported entity.');
+    buildModel(result, name);
+    setMsg(`Opened in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  } catch (err) {
+    setMsg(String(err.message || err), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function openFile(file) {
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  await loadBuffer(file.name, buf);
+}
+
+// ---------- Build three.js model from occt result ----------
+const DEFAULT_COLOR = new THREE.Color(0x9aa7b4);
+
+function disposeModel() {
+  model.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+  });
+  model.clear();
+  state.parts = [];
+  measure.reset();
+}
+
+function makeMaterials(color) {
+  const front = new THREE.MeshStandardMaterial({
+    color, metalness: 0.15, roughness: 0.55,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    side: THREE.FrontSide, clippingPlanes: [],
+  });
+  return front;
+}
+
+function buildModel(result, name) {
+  disposeModel();
+  const capColor = new THREE.Color(themeColor('--accent') || '#e0601f');
+  const meshObjs = result.meshes.map((m, i) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
+    if (m.attributes.normal) geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
+    geo.setIndex(new THREE.Uint32BufferAttribute(Uint32Array.from(m.index.array), 1));
+    if (!m.attributes.normal) geo.computeVertexNormals();
+
+    const base = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2]) : DEFAULT_COLOR.clone();
+    let material;
+    const faceColors = (m.brep_faces || []).some(f => f.color);
+    if (faceColors) {
+      // One material group per B-rep face that has its own color.
+      const mats = [makeMaterials(base)];
+      const key = new Map();
+      geo.clearGroups();
+      for (const f of m.brep_faces) {
+        let mi = 0;
+        if (f.color) {
+          const k = f.color.join(',');
+          if (!key.has(k)) { key.set(k, mats.length); mats.push(makeMaterials(new THREE.Color(...f.color))); }
+          mi = key.get(k);
+        }
+        geo.addGroup(f.first * 3, (f.last - f.first + 1) * 3, mi);
+      }
+      material = mats;
+    } else {
+      material = makeMaterials(base);
+    }
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.name = m.name || `Body ${i + 1}`;
+
+    // Back faces show where the section plane cuts the solid.
+    const back = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: capColor, side: THREE.BackSide, clippingPlanes: [] }));
+    back.visible = false;
+
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo, 28),
+      new THREE.LineBasicMaterial({ color: 0x1b232c, transparent: true, opacity: 0.55, clippingPlanes: [] })
+    );
+    edges.visible = state.showEdges;
+
+    const holder = new THREE.Group();
+    holder.add(mesh, back, edges);
+    const part = { name: mesh.name, color: base, mesh, back, edges, holder, tri: m.index.array.length / 3, faceRanges: m.brep_faces || null };
+    mesh.userData.part = part;
+    return part;
+  });
+
+  // Rebuild hierarchy from the occt node tree.
+  function buildNode(node, parentGroup, depth) {
+    const g = new THREE.Group();
+    g.name = node.name || '';
+    parentGroup.add(g);
+    const entry = { name: node.name || (depth === 0 ? name : 'Assembly'), group: g, children: [], parts: [] };
+    for (const mi of node.meshes || []) {
+      const p = meshObjs[mi];
+      g.add(p.holder);
+      entry.parts.push(p);
+      state.parts.push(p);
+    }
+    for (const c of node.children || []) entry.children.push(buildNode(c, g, depth + 1));
+    return entry;
+  }
+  const rootEntry = buildNode(result.root, model, 0);
+  // Meshes not referenced by the tree.
+  meshObjs.forEach(p => { if (!p.holder.parent) { model.add(p.holder); state.parts.push(p); rootEntry.parts.push(p); } });
+
+  $('fileName').textContent = name;
+  document.title = `${name} · 3D Viewer`;
+  renderTree(rootEntry);
+  applyWire();
+  updateClip();
+  recompute();
+  setView('iso');
+  updateOrthoFrustum();
+}
+
+// ---------- Structure tree ----------
+function renderTree(rootEntry) {
+  const ul = $('tree'); ul.innerHTML = '';
+  let idc = 0;
+  function countParts(e) { return e.parts.length + e.children.reduce((a, c) => a + countParts(c), 0); }
+  function add(entry, parentUl) {
+    // Collapse empty single-child wrapper nodes.
+    if (entry.parts.length === 0 && entry.children.length === 1 && parentUl !== ul) { add(entry.children[0], parentUl); return; }
+    const li = document.createElement('li');
+    const row = document.createElement('div'); row.className = 'node';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.id = `vis-${idc++}`;
+    cb.setAttribute('aria-label', `Show ${entry.name}`);
+    cb.addEventListener('change', () => { entry.group.visible = cb.checked; recompute(); });
+    const nm = document.createElement('span'); nm.className = 'name'; nm.textContent = entry.name || 'Assembly';
+    const ct = document.createElement('span'); ct.className = 'count'; ct.textContent = countParts(entry);
+    row.append(cb, nm, ct); li.append(row);
+    const sub = document.createElement('ul');
+    for (const p of entry.parts) {
+      const pli = document.createElement('li');
+      const prow = document.createElement('div'); prow.className = 'node';
+      const pcb = document.createElement('input'); pcb.type = 'checkbox'; pcb.checked = true; pcb.id = `vis-${idc++}`;
+      pcb.setAttribute('aria-label', `Show ${p.name}`);
+      pcb.addEventListener('change', () => { p.holder.visible = pcb.checked; recompute(); });
+      const sw = document.createElement('span'); sw.className = 'swatch'; sw.style.background = '#' + p.color.getHexString();
+      const pn = document.createElement('span'); pn.className = 'name'; pn.textContent = p.name; pn.title = p.name;
+      const tc = document.createElement('span'); tc.className = 'count'; tc.textContent = p.tri.toLocaleString();
+      tc.title = 'Triangles';
+      prow.append(pcb, sw, pn, tc);
+      prow.addEventListener('click', (e) => { if (e.target !== pcb) selectPart(p); });
+      p.row = prow;
+      pli.append(prow); sub.append(pli);
+    }
+    for (const c of entry.children) add(c, sub);
+    if (sub.children.length) li.append(sub);
+    parentUl.append(li);
+  }
+  add(rootEntry, ul);
+}
+
+let selected = null;
+function selectPart(p) {
+  if (selected) {
+    selected.row && selected.row.classList.remove('sel');
+    forEachMat(selected.mesh, m => m.emissive.setHex(0x000000));
+  }
+  selected = (selected === p) ? null : p;
+  if (selected) {
+    selected.row && selected.row.classList.add('sel');
+    forEachMat(selected.mesh, m => m.emissive.set(themeColor('--accent') || '#e0601f').multiplyScalar(0.35));
+    selected.row && selected.row.scrollIntoView({ block: 'nearest' });
+  }
+  recompute();
+}
+function forEachMat(mesh, fn) { (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(fn); }
+
+// ---------- Geometry stats ----------
+function isShown(o) { while (o) { if (!o.visible) return false; o = o.parent; } return true; }
+
+function recompute() {
+  const parts = (selected ? [selected] : state.parts).filter(p => isShown(p.holder));
+  const box = new THREE.Box3();
+  let vol = 0, area = 0, tris = 0;
+  const c = new THREE.Vector3();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), d = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), cr = new THREE.Vector3();
+  model.updateMatrixWorld(true);
+  for (const p of parts) {
+    const geo = p.mesh.geometry, pos = geo.attributes.position, idx = geo.index.array;
+    const mw = p.mesh.matrixWorld;
+    box.expandByObject(p.mesh);
+    for (let i = 0; i < idx.length; i += 3) {
+      a.fromBufferAttribute(pos, idx[i]).applyMatrix4(mw);
+      b.fromBufferAttribute(pos, idx[i + 1]).applyMatrix4(mw);
+      d.fromBufferAttribute(pos, idx[i + 2]).applyMatrix4(mw);
+      const v6 = a.dot(cr.crossVectors(b, d)); // 6 x signed tetra volume
+      vol += v6;
+      c.x += v6 * (a.x + b.x + d.x); c.y += v6 * (a.y + b.y + d.y); c.z += v6 * (a.z + b.z + d.z);
+      area += cr.crossVectors(e1.subVectors(b, a), e2.subVectors(d, a)).length() / 2;
+    }
+    tris += idx.length / 3;
+  }
+  vol /= 6;
+  if (Math.abs(vol) > 1e-9) c.divideScalar(24 * vol);
+  // Bounding box of all parts drives camera framing; stats use visible or selected parts.
+  const allBox = new THREE.Box3();
+  state.parts.forEach(p => allBox.expandByObject(p.mesh));
+  state.bbox.copy(allBox);
+  state.diag = allBox.isEmpty() ? 100 : allBox.getSize(new THREE.Vector3()).length();
+
+  const f2 = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const f1 = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (box.isEmpty()) {
+    ['sx', 'sy', 'sz', 'bmin', 'bmax', 'vol', 'area', 'cog', 'mass'].forEach(id => $(id).textContent = '–');
+  } else {
+    const s = box.getSize(new THREE.Vector3());
+    $('sx').textContent = f2(s.x); $('sy').textContent = f2(s.y); $('sz').textContent = f2(s.z);
+    $('bmin').textContent = `${f1(box.min.x)}, ${f1(box.min.y)}, ${f1(box.min.z)}`;
+    $('bmax').textContent = `${f1(box.max.x)}, ${f1(box.max.y)}, ${f1(box.max.z)}`;
+    const V = Math.abs(vol);
+    $('vol').textContent = V > 1e5 ? `${f2(V / 1000)} cm³` : `${Math.round(V).toLocaleString()} mm³`;
+    $('area').textContent = area > 1e5 ? `${f2(area / 100)} cm²` : `${Math.round(area).toLocaleString()} mm²`;
+    $('cog').textContent = `${f1(c.x)}, ${f1(c.y)}, ${f1(c.z)}`;
+    state.volume = V;
+    updateMass();
+  }
+  $('stTris').textContent = `${tris.toLocaleString()} triangles`;
+  $('stParts').textContent = selected ? `Selected: ${selected.name}` : `${parts.length} of ${state.parts.length} parts shown`;
+  updateClipRange();
+}
+
+function density() {
+  const v = $('material').value;
+  return v === 'custom' ? parseFloat($('density').value) || 0 : parseFloat(v);
+}
+function updateMass() {
+  if (!state.volume) { $('mass').textContent = '–'; return; }
+  const g = state.volume / 1000 * density();
+  $('mass').textContent = g >= 1000 ? `${(g / 1000).toFixed(3)} kg` : `${g.toFixed(1)} g`;
+}
+
+// ---------- Display toggles ----------
+function applyWire() {
+  for (const p of state.parts) {
+    forEachMat(p.mesh, m => { m.wireframe = state.wire; });
+    p.edges.visible = state.showEdges && !state.wire;
+  }
+}
+
+// ---------- Section plane ----------
+const clipNormals = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+function updateClipRange() {
+  const axis = $('clipAxis').value;
+  const b = state.bbox;
+  if (b.isEmpty()) return;
+  const lo = b.min[axis], hi = b.max[axis];
+  const t = $('clipPos').value / 1000;
+  state.clipValue = lo + (hi - lo) * t;
+  $('clipVal').textContent = `${axis.toUpperCase()} = ${(Math.abs(state.clipValue) < 0.005 ? 0 : state.clipValue).toFixed(2)} mm`;
+}
+function updateClip() {
+  updateClipRange();
+  const on = $('clipOn').checked;
+  const axis = $('clipAxis').value;
+  // Default side: the cut face points toward the iso camera (+X, -Y, +Z).
+  const keepAbove = (axis === 'y') !== state.clipFlip;
+  const n = clipNormals[axis].clone().multiplyScalar(keepAbove ? 1 : -1);
+  // Keep the side where n·p + d >= 0.
+  state.clipPlane.normal.copy(n);
+  state.clipPlane.constant = -n.dot(clipNormals[axis].clone().multiplyScalar(state.clipValue ?? 0));
+  const planes = on ? [state.clipPlane] : [];
+  for (const p of state.parts) {
+    forEachMat(p.mesh, m => { m.clippingPlanes = planes; m.needsUpdate = true; });
+    p.back.material.clippingPlanes = planes; p.back.visible = on;
+    p.edges.material.clippingPlanes = planes;
+  }
+}
+
+// ---------- Picking and measuring ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function pick(ev) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const targets = state.parts.filter(p => isShown(p.holder)).map(p => p.mesh);
+  const hits = raycaster.intersectObjects(targets, false);
+  const on = $('clipOn').checked;
+  return hits.find(h => !on || state.clipPlane.distanceToPoint(h.point) >= 0) || null;
+}
+
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY, e.button]; });
+renderer.domElement.addEventListener('pointermove', (e) => { if (!downAt) measure.move(e); });
+renderer.domElement.addEventListener('pointerleave', () => measure.leave());
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt || downAt[2] !== 0) { downAt = null; return; }
+  const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+  downAt = null;
+  if (moved > 4) return;
+  if (measure.enabled) { measure.click(e); return; }
+  const hit = pick(e);
+  if (!hit) {
+    $('stPick').textContent = 'No surface under the cursor';
+    if (selected) selectPart(selected);
+    return;
+  }
+  const p = hit.point;
+  $('stPick').textContent = `Point ${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)} mm · ${hit.object.userData.part.name}`;
+  selectPart(hit.object.userData.part);
+});
+renderer.domElement.addEventListener('dblclick', (e) => {
+  const hit = pick(e);
+  if (hit) { controls.target.copy(hit.point); controls.update(); }
+});
+
+// ---------- UI wiring ----------
+$('openBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => { openFile(e.target.files[0]); e.target.value = ''; });
+$('exampleBtn').addEventListener('click', loadExample);
+$('quality').addEventListener('change', () => { if (state.lastBuffer) loadBuffer(state.lastName, state.lastBuffer); });
+$('material').addEventListener('change', () => { $('customRow').hidden = $('material').value !== 'custom'; updateMass(); });
+$('density').addEventListener('input', updateMass);
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+$('fitBtn').addEventListener('click', fit);
+$('edgesBtn').addEventListener('click', () => {
+  state.showEdges = !state.showEdges; $('edgesBtn').setAttribute('aria-pressed', String(state.showEdges)); applyWire();
+});
+$('wireBtn').addEventListener('click', () => {
+  state.wire = !state.wire; $('wireBtn').setAttribute('aria-pressed', String(state.wire)); applyWire();
+});
+$('orthoBtn').addEventListener('click', () => setCamera(camera !== ortho));
+$('measureBtn').addEventListener('click', () => {
+  const on = !measure.enabled;
+  if (on && selected) selectPart(selected);
+  if (on && state.parts.length) { setBusy(true, 'Finding points, edges and faces…'); }
+  setTimeout(() => {
+    measure.setEnabled(on);
+    setBusy(false);
+    $('measureBtn').setAttribute('aria-pressed', String(on));
+    renderer.domElement.style.cursor = on ? 'crosshair' : '';
+  }, 30);
+});
+$('mClear').addEventListener('click', () => measure.clear());
+function setPickMode(free) {
+  measure.setFree(free);
+  $('mModeFeat').setAttribute('aria-pressed', String(!free));
+  $('mModeFree').setAttribute('aria-pressed', String(free));
+}
+$('mModeFeat').addEventListener('click', () => setPickMode(false));
+$('mModeFree').addEventListener('click', () => setPickMode(true));
+window.addEventListener('keydown', (e) => { if (e.key === 'Shift') measure.setShift(true); });
+window.addEventListener('keyup', (e) => { if (e.key === 'Shift') measure.setShift(false); });
+window.addEventListener('blur', () => measure.setShift(false));
+['clipOn', 'clipAxis'].forEach(id => $(id).addEventListener('change', updateClip));
+$('clipPos').addEventListener('input', updateClip);
+$('clipFlip').addEventListener('click', () => { state.clipFlip = !state.clipFlip; updateClip(); });
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, select, textarea')) return;
+  const k = e.key.toLowerCase();
+  const map = { i: 'iso', 1: 'front', 2: 'back', 3: 'left', 4: 'right', 5: 'top', 6: 'bottom' };
+  if (map[k]) setView(map[k]);
+  else if (k === 'f') fit();
+  else if (k === 'e') $('edgesBtn').click();
+  else if (k === 'w') $('wireBtn').click();
+  else if (k === 'o') $('orthoBtn').click();
+  else if (k === 'm') $('measureBtn').click();
+  else if (k === 'escape' && measure.enabled) measure.clear();
+});
+
+// Drag and drop anywhere on the page.
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; $('drop').classList.add('on'); });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('drop').classList.remove('on'); } });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault(); dragDepth = 0; $('drop').classList.remove('on');
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) openFile(f);
+});
+
+async function loadExample() {
+  try {
+    setBusy(true, 'Loading example…');
+    const res = await fetch('example-bracket.txt');
+    if (!res.ok) throw new Error('The example file is missing.');
+    await loadBuffer('example-bracket.step', await res.arrayBuffer());
+  } catch (err) {
+    setBusy(false); setMsg(String(err.message || err), true);
+  }
+}
+
+resize();
+setView('iso');
+loadExample();
+</script>
+</body>
+</html>
