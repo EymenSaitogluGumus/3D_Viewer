@@ -22,6 +22,8 @@ cd 3D_Viewer
 python3 -m http.server 8000
 ```
 
+On Windows, use `py -m http.server 8000` instead of the last line (or `python -m http.server 8000` if `py` is not found).
+
 Then open <http://localhost:8000>. An example bracket loads on start. Drop your own file on the page, or click **Open file…**.
 
 Opening `index.html` directly by double-clicking will not work. The page has to be served over HTTP, and any static server will do.
