@@ -6,7 +6,7 @@ Open a CAD or mesh file in your browser and measure it. No install, no account, 
 
 ## What it does
 
-- Opens **STEP, IGES, BREP, STL, 3MF, OBJ, glTF/GLB and PLY** files by drag and drop
+- Opens **STEP, IGES, BREP, FreeCAD, STL, 3MF, OBJ, glTF/GLB and PLY** files by drag and drop
 - Shows overall size, volume, surface area, centroid and mass
 - Measures distances, angles, edge lengths, radii and hole diameters
 - Cuts a section through the model along X, Y or Z
@@ -33,13 +33,14 @@ Opening `index.html` directly by double-clicking will not work. The page has to 
 | STEP | `.step`, `.stp` | Best choice. Exact geometry, assemblies and units |
 | IGES | `.iges`, `.igs` | Exact geometry |
 | BREP | `.brep`, `.brp` | Open CASCADE native format |
+| FreeCAD | `.FCStd` | Shows the objects that are visible in FreeCAD. The file must be saved after a recompute |
 | 3MF | `.3mf` | Units are read from the file |
 | glTF | `.glb`, `.gltf` | Converted from metres and Y-up. A `.gltf` must have its data embedded; otherwise export `.glb` |
 | STL | `.stl` | No units in the format, read as millimetres |
 | OBJ | `.obj` | No units in the format, read as millimetres |
 | PLY | `.ply` | Meshes only, not point clouds. Read as millimetres |
 
-Native CAD files such as SolidWorks, Inventor, CATIA, Fusion or Parasolid cannot be opened in a browser. Export STEP from your CAD tool instead.
+Other native CAD files such as SolidWorks, Inventor, CATIA, Fusion or Parasolid cannot be opened in a browser. Export STEP from your CAD tool instead.
 
 ## Shortcuts
 
@@ -62,10 +63,10 @@ While measuring, hold `Shift` to pick any point instead of snapping to a feature
 ## Good to know
 
 - All values are in millimetres.
-- Numbers are computed from the triangle mesh, so they are close approximations, not exact CAD values. For STEP, IGES and BREP, set **Mesh quality** to Fine for tighter results.
-- Hole and edge snapping works best with STEP, IGES and BREP. Mesh formats have no true edges, so pick faces or use **Free points**.
+- Numbers are computed from the triangle mesh, so they are close approximations, not exact CAD values. For STEP, IGES, BREP and FreeCAD, set **Mesh quality** to Fine for tighter results.
+- Hole and edge snapping works best with STEP, IGES, BREP and FreeCAD. Mesh formats have no true edges, so pick faces or use **Free points**.
 - Volume and mass are only meaningful for closed solids.
 
 ## Built with
 
-[three.js](https://threejs.org/) for rendering and for reading STL, 3MF, OBJ, glTF and PLY, [occt-import-js](https://github.com/kovacsv/occt-import-js) for reading STEP, IGES and BREP, and [fflate](https://github.com/101arrowz/fflate) for unpacking 3MF. All of them are bundled in this repository, so there is nothing to install or build.
+[three.js](https://threejs.org/) for rendering and for reading STL, 3MF, OBJ, glTF and PLY, [occt-import-js](https://github.com/kovacsv/occt-import-js) for reading STEP, IGES, BREP and FreeCAD shapes, and [fflate](https://github.com/101arrowz/fflate) for unpacking 3MF and FreeCAD files. All of them are bundled in this repository, so there is nothing to install or build.

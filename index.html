@@ -219,8 +219,8 @@ footer.status .right { margin-left: auto; }
         <button class="btn primary grow" id="openBtn" type="button">Open file…</button>
         <button class="btn" id="exampleBtn" type="button">Example</button>
       </div>
-      <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs,.brep,.brp,.stl,.3mf,.obj,.gltf,.glb,.ply" hidden>
-      <p class="hint">Or drop a STEP, IGES, BREP, STL, 3MF, OBJ, glTF/GLB or PLY file on the view. STL, OBJ and PLY are read as mm. Files stay in your browser.</p>
+      <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs,.brep,.brp,.fcstd,.stl,.3mf,.obj,.gltf,.glb,.ply" hidden>
+      <p class="hint">Or drop a STEP, IGES, BREP, FreeCAD, STL, 3MF, OBJ, glTF/GLB or PLY file on the view. STL, OBJ and PLY are read as mm. Files stay in your browser.</p>
       <div class="row">
         <label for="quality" class="grow">Mesh quality</label>
         <select id="quality">
@@ -672,11 +672,114 @@ function parsePly(name, buffer) {
   return meshResult(name, meshesFromObject(mesh, 1), 'This PLY file has no faces to show.');
 }
 
+// FreeCAD .FCStd: a zip holding Document.xml, GuiDocument.xml and one saved B-rep per shape.
+// Show what FreeCAD shows: visible solids inside visible containers, not every intermediate feature.
+const FC_CONTAINER = /^(PartDesign::Body|App::Part|App::DocumentObjectGroup)/;
+const FC_TRANSFORMS = /^(PartDesign::Body|App::Part)/;
+const FC_SKIP = /^(Sketcher::|App::(Origin|Line|Plane|Point|Link)|Part::Part2DObject|PartDesign::(Plane|Line|Point|CoordinateSystem|ShapeBinder|SubShapeBinder)|Spreadsheet::|TechDraw::)/;
+async function parseFcstd(name, buffer, params) {
+  let zip;
+  try { zip = fflate.unzipSync(new Uint8Array(buffer)); } catch (e) { throw new Error('This FreeCAD file could not be unpacked. It may be damaged.'); }
+  if (!zip['Document.xml']) throw new Error('This is not a FreeCAD document: Document.xml is missing.');
+  const dec = new TextDecoder();
+  const xml = (k) => new DOMParser().parseFromString(dec.decode(zip[k]), 'application/xml');
+  const doc = xml('Document.xml');
+  const gui = zip['GuiDocument.xml'] ? xml('GuiDocument.xml') : null;
+  const prop = (el, n) => el ? [...el.querySelectorAll(':scope > Properties > Property')].find(p => p.getAttribute('name') === n) : null;
+
+  const objs = new Map();
+  for (const o of doc.querySelectorAll('Document > Objects > Object')) {
+    objs.set(o.getAttribute('name'), { name: o.getAttribute('name'), type: o.getAttribute('type') || '', invalid: o.getAttribute('Invalid') === '1' });
+  }
+  for (const el of doc.querySelectorAll('Document > ObjectData > Object')) {
+    const o = objs.get(el.getAttribute('name')); if (!o) continue;
+    const lab = prop(el, 'Label'); o.label = lab && lab.querySelector('String') ? lab.querySelector('String').getAttribute('value') : o.name;
+    const vis = prop(el, 'Visibility'); if (vis && vis.querySelector('Bool')) o.visible = vis.querySelector('Bool').getAttribute('value') === 'true';
+    const pl = prop(el, 'Placement'); const pp = pl && pl.querySelector('PropertyPlacement');
+    if (pp) {
+      const f = (k) => parseFloat(pp.getAttribute(k)) || 0;
+      o.matrix = new THREE.Matrix4().compose(new THREE.Vector3(f('Px'), f('Py'), f('Pz')),
+        new THREE.Quaternion(f('Q0'), f('Q1'), f('Q2'), f('Q3') || 1).normalize(), new THREE.Vector3(1, 1, 1));
+    }
+    const sh = prop(el, 'Shape'); const part = sh && sh.querySelector('Part');
+    if (part) o.file = part.getAttribute('file') || '';
+    const grp = prop(el, 'Group');
+    o.group = grp ? [...grp.querySelectorAll('Link')].map(l => l.getAttribute('value')).filter(Boolean) : [];
+  }
+  if (gui) {
+    for (const vp of gui.querySelectorAll('ViewProviderData > ViewProvider')) {
+      const o = objs.get(vp.getAttribute('name')); if (!o) continue;
+      const vis = prop(vp, 'Visibility'); if (vis && vis.querySelector('Bool')) o.visible = vis.querySelector('Bool').getAttribute('value') === 'true';
+      const app = prop(vp, 'ShapeAppearance'); const ml = app && app.querySelector('MaterialList');
+      const bin = ml && zip[ml.getAttribute('file')];
+      if (bin && bin.length >= 12) {
+        const v = new DataView(bin.buffer, bin.byteOffset, bin.byteLength).getUint32(8, true); // first material, diffuse RGBA
+        o.color = [(v >>> 24) / 255, ((v >>> 16) & 255) / 255, ((v >>> 8) & 255) / 255];
+      } else {
+        const sc = prop(vp, 'ShapeColor'); const pc = sc && sc.querySelector('PropertyColor');
+        if (pc) { const v = parseInt(pc.getAttribute('value'), 10) >>> 0; o.color = [(v >>> 24) / 255, ((v >>> 16) & 255) / 255, ((v >>> 8) & 255) / 255]; }
+      }
+    }
+  }
+
+  const parent = new Map();
+  for (const o of objs.values()) if (FC_CONTAINER.test(o.type)) for (const c of o.group || []) if (!parent.has(c)) parent.set(c, o.name);
+  const ancestors = (n) => { const a = []; let p = parent.get(n); while (p && !a.includes(p)) { a.push(p); p = parent.get(p); } return a; };
+  const shown = (o) => o.visible !== false && ancestors(o.name).every(a => objs.get(a).visible !== false);
+  const hasShape = (o) => o.file && zip[o.file] && zip[o.file].length > 0;
+  const isText = (o) => /CASCADE Topology/.test(dec.decode(zip[o.file].subarray(0, 200)));
+
+  const all = [...objs.values()];
+  let picks = all.filter(o => hasShape(o) && !FC_CONTAINER.test(o.type) && !FC_SKIP.test(o.type) && shown(o));
+  if (!picks.length) picks = all.filter(o => o.type.startsWith('PartDesign::Body') && hasShape(o));
+  if (!picks.length) picks = all.filter(o => hasShape(o) && !parent.has(o.name) && !FC_SKIP.test(o.type));
+  if (!picks.length) {
+    const missing = all.some(o => o.file && !zip[o.file]);
+    throw new Error(missing
+      ? 'This FreeCAD file keeps its shapes outside the archive (document cache). Re-save it with the cache directory unset, or export STEP.'
+      : 'This FreeCAD file has no saved 3D shapes. Open it in FreeCAD, recompute, and save again.');
+  }
+  const binary = picks.filter(o => !isText(o));
+  picks = picks.filter(o => isText(o));
+  if (!picks.length) throw new Error('This FreeCAD file stores shapes in binary form, which this viewer cannot read. Export STEP from FreeCAD instead.');
+
+  const meshes = [], children = [], rootMeshes = [];
+  const nrm = new THREE.Matrix3(), v = new THREE.Vector3();
+  for (const o of picks) {
+    const u8 = zip[o.file];
+    const r = await parse('brep', u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), params);
+    if (!r || !r.success || !r.meshes.length) continue;
+    const M = new THREE.Matrix4();
+    for (const a of ancestors(o.name).reverse()) { const ao = objs.get(a); if (FC_TRANSFORMS.test(ao.type) && ao.matrix) M.multiply(ao.matrix); }
+    if (o.matrix && FC_TRANSFORMS.test(o.type)) M.multiply(o.matrix);
+    const moved = !M.equals(new THREE.Matrix4());
+    if (moved) nrm.getNormalMatrix(M);
+    const offset = meshes.length;
+    for (const m of r.meshes) {
+      if (moved) {
+        const p = m.attributes.position.array;
+        for (let i = 0; i < p.length; i += 3) { v.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(M); p[i] = v.x; p[i + 1] = v.y; p[i + 2] = v.z; }
+        const n = m.attributes.normal && m.attributes.normal.array;
+        if (n) for (let i = 0; i < n.length; i += 3) { v.set(n[i], n[i + 1], n[i + 2]).applyMatrix3(nrm).normalize(); n[i] = v.x; n[i + 1] = v.y; n[i + 2] = v.z; }
+      }
+      if (!m.color && o.color) m.color = o.color;
+      m.name = o.label;
+      meshes.push(m);
+    }
+    const remap = (node) => ({ name: node.name, meshes: (node.meshes || []).map(i => i + offset), children: (node.children || []).map(remap) });
+    const node = remap(r.root); node.name = o.label;
+    if (!node.children.length) rootMeshes.push(...node.meshes); else children.push(node);
+  }
+  if (!meshes.length) throw new Error('The shapes in this FreeCAD file could not be read. Export STEP from FreeCAD instead.');
+  return { success: true, root: { name, meshes: rootMeshes, children }, meshes, note: binary.length ? `${binary.length} binary shape(s) skipped` : '' };
+}
+
 function formatOf(name) {
   const ext = name.toLowerCase().split('.').pop();
   if (ext === 'step' || ext === 'stp') return 'step';
   if (ext === 'iges' || ext === 'igs') return 'iges';
   if (ext === 'brep' || ext === 'brp') return 'brep';
+  if (ext === 'fcstd') return 'fcstd';
   if (ext === 'stl') return 'stl';
   if (ext === '3mf') return '3mf';
   if (ext === 'obj') return 'obj';
@@ -698,7 +801,7 @@ function fmtBytes(n) {
 
 async function loadBuffer(name, buffer) {
   const format = formatOf(name);
-  if (!format) { setMsg(`Cannot open "${name}". Use a STEP, IGES, BREP, STL, 3MF, OBJ, glTF/GLB or PLY file.`, true); return; }
+  if (!format) { setMsg(`Cannot open "${name}". Use a STEP, IGES, BREP, FreeCAD (.FCStd), STL, 3MF, OBJ, glTF/GLB or PLY file.`, true); return; }
   state.lastBuffer = buffer; state.lastFormat = format; state.lastName = name;
   setBusy(true, `Reading ${name} (${fmtBytes(buffer.byteLength)})…`);
   const t0 = performance.now();
@@ -709,7 +812,7 @@ async function loadBuffer(name, buffer) {
       linearDeflection: parseFloat($('quality').value),
       angularDeflection: 0.5,
     };
-    const MESH_PARSERS = { stl: parseStl, '3mf': parse3mf, obj: parseObj, gltf: parseGltf, ply: parsePly };
+    const MESH_PARSERS = { stl: parseStl, '3mf': parse3mf, obj: parseObj, gltf: parseGltf, ply: parsePly, fcstd: (n, b) => parseFcstd(n, b, params) };
     const result = MESH_PARSERS[format] ? await MESH_PARSERS[format](name, buffer) : await parse(format, buffer, params);
     if (!result || !result.success) throw new Error('The file could not be read. It may be damaged or use an unsupported entity.');
     buildModel(result, name);
