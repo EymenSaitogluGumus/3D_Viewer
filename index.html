@@ -209,7 +209,7 @@ footer.status .right { margin-left: auto; }
       <path d="M12 12 21 7M12 12 3 7M12 12v10" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
     </svg>
     <h1>3D Viewer</h1>
-    <span class="fmt">STEP IGES STL 3MF</span>
+    <span class="fmt">CAD · MESH</span>
   </div>
   <div class="scroll">
     <section class="block">
@@ -219,8 +219,8 @@ footer.status .right { margin-left: auto; }
         <button class="btn primary grow" id="openBtn" type="button">Open file…</button>
         <button class="btn" id="exampleBtn" type="button">Example</button>
       </div>
-      <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs,.brep,.brp,.stl,.3mf" hidden>
-      <p class="hint">Or drop a .step, .iges, .brep, .stl or .3mf file on the view. STL is read as mm. Files stay in your browser.</p>
+      <input type="file" id="fileInput" accept=".step,.stp,.iges,.igs,.brep,.brp,.stl,.3mf,.obj,.gltf,.glb,.ply" hidden>
+      <p class="hint">Or drop a STEP, IGES, BREP, STL, 3MF, OBJ, glTF/GLB or PLY file on the view. STL, OBJ and PLY are read as mm. Files stay in your browser.</p>
       <div class="row">
         <label for="quality" class="grow">Mesh quality</label>
         <select id="quality">
@@ -345,6 +345,9 @@ import * as THREE from './three.module.min.js';
 import { OrbitControls } from './OrbitControls.js';
 import { STLLoader } from './STLLoader.js';
 import { ThreeMFLoader } from './3MFLoader.js';
+import { OBJLoader } from './OBJLoader.js';
+import { GLTFLoader } from './GLTFLoader.js';
+import { PLYLoader } from './PLYLoader.js';
 import * as fflate from './fflate.module.js';
 import { createMeasure } from './measure.js';
 
@@ -607,6 +610,68 @@ function parse3mf(name, buffer) {
   return { success: meshes.length > 0, root: { name, meshes: meshes.map((_, i) => i), children: [] }, meshes };
 }
 
+// Turn a loaded Three.js scene into the viewer's mesh list: bake transforms, scale to mm, keep triangles only.
+function meshesFromObject(root, scale, yUp = false) {
+  root.updateMatrixWorld(true);
+  const S = new THREE.Matrix4().makeScale(scale, scale, scale);
+  if (yUp) S.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)); // Y-up to the viewer's Z-up
+  const meshes = [];
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return;
+    if (o.geometry.attributes.position.count < 3) return;
+    const g = o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(S, o.matrixWorld));
+    const pos = Float32Array.from(g.attributes.position.array);
+    let index = g.index ? Uint32Array.from(g.index.array) : null;
+    if (!index) { index = new Uint32Array(pos.length / 3); for (let i = 0; i < index.length; i++) index[i] = i; }
+    if (index.length < 3) return;
+    const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+    const c = mat && mat.color ? mat.color : null;
+    meshes.push({
+      name: o.name || `Object ${meshes.length + 1}`,
+      color: c && !(c.r === 1 && c.g === 1 && c.b === 1) ? [c.r, c.g, c.b] : null,
+      attributes: { position: { array: pos } },
+      index: { array: index },
+    });
+  });
+  return meshes;
+}
+function meshResult(name, meshes, emptyMsg) {
+  if (!meshes.length) throw new Error(emptyMsg);
+  return { success: true, root: { name, meshes: meshes.map((_, i) => i), children: [] }, meshes };
+}
+
+// OBJ has no units: read as mm.
+function parseObj(name, buffer) {
+  const group = new OBJLoader().parse(new TextDecoder().decode(buffer));
+  return meshResult(name, meshesFromObject(group, 1), 'This OBJ file has no faces to show.');
+}
+
+// glTF is metres and Y-up by specification: scale to mm and turn Z-up. Single-file only (.glb or .gltf with embedded data).
+function parseGltf(name, buffer) {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().parse(buffer, '', (gltf) => {
+      try { resolve(meshResult(name, meshesFromObject(gltf.scene, 1000, true), 'This glTF file has no meshes to show.')); }
+      catch (e) { reject(e); }
+    }, (err) => {
+      const msg = String((err && err.message) || err);
+      reject(new Error(/\.bin|fetch|load/i.test(msg) && /\.gltf$/i.test(name)
+        ? 'This .gltf file references separate files. Export it as .glb, or as .gltf with embedded data.'
+        : 'The glTF file could not be read: ' + msg));
+    });
+  });
+}
+
+// PLY has no units: read as mm. Point clouds without faces cannot be shown as a solid.
+function parsePly(name, buffer) {
+  const geo = new PLYLoader().parse(buffer);
+  if (!geo.index && geo.attributes.position.count % 3 !== 0) throw new Error('This PLY file is a point cloud with no faces. Only PLY meshes are supported.');
+  if (geo.index && geo.index.count === 0) throw new Error('This PLY file is a point cloud with no faces. Only PLY meshes are supported.');
+  const mesh = new THREE.Mesh(geo);
+  mesh.name = name.replace(/\.ply$/i, '');
+  return meshResult(name, meshesFromObject(mesh, 1), 'This PLY file has no faces to show.');
+}
+
 function formatOf(name) {
   const ext = name.toLowerCase().split('.').pop();
   if (ext === 'step' || ext === 'stp') return 'step';
@@ -614,6 +679,9 @@ function formatOf(name) {
   if (ext === 'brep' || ext === 'brp') return 'brep';
   if (ext === 'stl') return 'stl';
   if (ext === '3mf') return '3mf';
+  if (ext === 'obj') return 'obj';
+  if (ext === 'gltf' || ext === 'glb') return 'gltf';
+  if (ext === 'ply') return 'ply';
   return null;
 }
 
@@ -630,7 +698,7 @@ function fmtBytes(n) {
 
 async function loadBuffer(name, buffer) {
   const format = formatOf(name);
-  if (!format) { setMsg(`Cannot open "${name}". Use a .step, .stp, .iges, .igs, .brep, .stl or .3mf file.`, true); return; }
+  if (!format) { setMsg(`Cannot open "${name}". Use a STEP, IGES, BREP, STL, 3MF, OBJ, glTF/GLB or PLY file.`, true); return; }
   state.lastBuffer = buffer; state.lastFormat = format; state.lastName = name;
   setBusy(true, `Reading ${name} (${fmtBytes(buffer.byteLength)})…`);
   const t0 = performance.now();
@@ -641,7 +709,8 @@ async function loadBuffer(name, buffer) {
       linearDeflection: parseFloat($('quality').value),
       angularDeflection: 0.5,
     };
-    const result = format === 'stl' ? parseStl(name, buffer) : format === '3mf' ? parse3mf(name, buffer) : await parse(format, buffer, params);
+    const MESH_PARSERS = { stl: parseStl, '3mf': parse3mf, obj: parseObj, gltf: parseGltf, ply: parsePly };
+    const result = MESH_PARSERS[format] ? await MESH_PARSERS[format](name, buffer) : await parse(format, buffer, params);
     if (!result || !result.success) throw new Error('The file could not be read. It may be damaged or use an unsupported entity.');
     buildModel(result, name);
     setMsg(`Opened in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
